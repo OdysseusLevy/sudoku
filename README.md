@@ -1,7 +1,7 @@
 # org.cosmosgame.sudoku
 
 A sudoku solver done in clojure. The main point is how elegantly clojure lets us work with this kind of problem.
-This is the example for my diving into clojure blog: http://www.blogger.com/blogger.g?blogID=4349967400944391189#editor/target=post;postID=1150014284743478152;onPublishedMenu=allposts;onClosedMenu=allposts;postNum=1;src=postname
+This is the example for my diving into clojure blogs: http://cosmosgame-programming.blogspot.com/2012/07/clojure-is-fun.html
 
 ## Usage
 

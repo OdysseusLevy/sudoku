@@ -174,6 +174,16 @@
   [board]
   (true? (or (nil? board) (:error board))))
 
+(defn valid-answer?
+  "Checks to see if an answer is valid"
+  [v]
+  (if (not (= 81 (count v)))
+    false
+    (let [test-board (create-board )
+        moves (map-indexed #(vector %1 %2) v)
+        test-board (reduce check-add-move test-board moves)]
+      (not (error? test-board)))))
+
 (defn solve
   [board]
   (debug "solve" board)

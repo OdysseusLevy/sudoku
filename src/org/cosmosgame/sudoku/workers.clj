@@ -1,74 +1,100 @@
 (ns org.cosmosgame.sudoku.workers
   (:use org.cosmosgame.sudoku.core clojure.tools.logging))
 
-(defn queue [] (java.util.concurrent.LinkedBlockingQueue.))
+(defn queue 
+  ([]
+    (queue (.. Runtime getRuntime availableProcessors)))
+  ([num-workers]
+    (let [q {}
+        q (assoc q :lbq (java.util.concurrent.LinkedBlockingQueue.) )
+        q (assoc q :num-workers num-workers )
+        q (assoc q :result (promise))
+        q (assoc q :idle-workers (atom (:num-workers q)))]
+    q)))
 
 (defn offer
-  "adds x to the back of queue q. Ignores nil inputs"
+  "Adds x to the back of queue q. Ignores nil inputs"
   [q x]
   (debug "adding " x)
   (if (not (nil? x))
-    (.offer q x)))
+    (.offer (:lbq q) x)))
 
 (defn offer-all
-  "adds every item of a sequence to q"
+  "Adds every item of a sequence to q"
   [q s]
   (offer q (first s))
   (if (not (empty? (rest s)))
     (recur q (rest s))))
 
+(defn check-stop
+  "Check to see if all of our workers are waiting for input. If we need to manually stop"
+  [q]
+
+  (debug "idle workers: " @(:idle-workers q))
+  (if (not (realized? (:result q)))
+    (if (and (= @(:idle-workers q) (:num-workers q)))
+      (do
+        (info "stopping stalled process")
+        (deliver (:result q) nil)
+        ; force any other workers to quit
+        (doall (repeatedly (:num-workers q) (partial (offer q nil))) )))))
+
+(defn do-job
+  [q pred item]
+  (debug "do-job: " item)
+
+  (swap! (:idle-workers q) - 1)
+  (pred q item)
+  (swap! (:idle-workers q) + 1) )
+
 (defn consumer
-  [q pred result]
+  [q pred]
   (future
-    ;(println "consumer launched")
-    (while (not (realized? result))
-      (debug "polling: " (.size q))
-      ;; Use .poll instead of .take so that we don't just hang when done
-      ;; Note that this means we can't distinguish between a nil put on the queue vs. when we time out on the poll
-      (when-let [item (.poll q 500 (java.util.concurrent.TimeUnit/MILLISECONDS))]
-        (debug "processing: " item)
-        (pred item result)))
+    (debug "consumer launched")
+    (while (not (realized? (:result q)))
+      (let [item (.poll (:lbq q) 500 (java.util.concurrent.TimeUnit/MILLISECONDS))]
+        (debug "took item: " item)
+        (if (nil? item)
+          (check-stop q)
+          (do-job q pred item))))
     (debug "finished with consumer")
-    ))
+    (:result q)))
 
 (defn start-workers
-  ([q pred result]
-    (let [n (+ 2 (.. Runtime getRuntime availableProcessors))]
-      (start-workers n q pred result)))
-  ([num q pred result]
-    (doall (take num (repeatedly (partial consumer q pred result) )))))
+  [q pred]
+    (doall (repeatedly (:num-workers q) (partial consumer q pred) )))
 
 (defn psolve-helper
-  [q board result]
+  [q board]
 
-  (if (nil? board)
-    nil
-    (if (solved? board)
-      (deliver result (:answers board))
-      (if (realized? result)
-        (dorun (debug "realized") result)
+  (debug "psolve-helper: " board)
+  (if (realized? (:result q))
+    @(:result q)
+    (if (nil? board)
+      nil
+      (if (solved? board)
+        (do (info "answer found!: " (:answers board))
+            (deliver (:result q) (:answers board)))
+
         (let [moves (next-moves board)
-              _ (debug "moves: " moves)
-              boards (map #(add-move board %) moves)
-              _ (debug "boards: " boards)]
-          (psolve-helper q (first boards) result)
-          (if (not (realized? result))
-            (offer-all q (rest boards)
-                                      )))))))
+                _ (debug "moves: " moves)
+                boards (map #(add-move board %) moves)]
+              (psolve-helper q (first boards))
+              (offer-all q (rest boards)))))))
 
 (defn psolve
   [board]
   (let [q (queue)
-        result (promise)
-        workers (start-workers q (partial psolve-helper q) result)]
+        workers (start-workers q psolve-helper )]
     (offer q board)
-    (deref result)
-    (info "result:" result)
-    result))
+    @(:result q)))
 
-(defn psolve-read
+(defn psolve-main
   "Sudoku solver"
   [board-str]
-  (let [board (read-board board-str) ]
-    (time (psolve board))))
+  (let [board (read-board board-str)
+        answer (time (psolve board))]
+    (shutdown-agents) ; if we don't do this the jvm never exits
+    (println answer)
+    answer))
 
